@@ -1,1 +1,16 @@
+:root{
+  --bg:#1b2430;
+  --panel:#0f1720;
+  --accent:#7bd;
+}
+html,body{height:100%;margin:0;background:var(--bg);font-family:system-ui,Segoe UI,Roboto,Arial;color:#cfe}
+#ui{width:1024px;margin:14px auto}
+#topbar{display:flex;justify-content:space-between;align-items:center;padding:8px;background:var(--panel);border-radius:8px;gap:8px}
+#controls{font-size:13px;opacity:.9}
+#game{display:block;margin-top:10px;border-radius:8px;background:#6ab}
+#hotbar{display:flex;justify-content:center;margin-top:8px;gap:8px}
+.hot{width:56px;height:56px;background:#112a36;border:2px solid rgba(255,255,255,0.06);display:flex;align-items:center;justify-content:center;border-radius:6px;position:relative}
+.hot.selected{outline:3px solid var(--accent)}
+.hot span{font-size:12px;position:absolute;right:4px;bottom:2px;opacity:0.9}
+button{background:#0b2d3a;color:#cde;border:0;padding:6px 10px;border-radius:6px;cursor:pointer}
 
