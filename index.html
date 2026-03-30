@@ -3,281 +3,192 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Catch the Falling Stars</title>
+<title>Maze Runner</title>
 <style>
-  :root{--bg:#0b1220;--player:#5eead4;--star:#facc15;--text:#e6edf3}
+  :root{--bg:#0b1220;--tile:#111827;--path:#e6edf3;--player:#60a5fa;--goal:#34d399}
   *{box-sizing:border-box}
   html,body{height:100%;margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial}
-  body{background:linear-gradient(180deg,#071022 0%,var(--bg) 100%);color:var(--text);display:flex;align-items:center;justify-content:center}
-  #game{width:480px;height:640px;background:linear-gradient(180deg,rgba(255,255,255,0.03),transparent);border-radius:12px;box-shadow:0 10px 30px rgba(2,6,23,.6);position:relative;overflow:hidden}
+  body{background:linear-gradient(180deg,#071022 0%,#081427 100%);display:flex;align-items:center;justify-content:center;color:var(--path)}
+  #game{width:640px;height:640px;border-radius:12px;overflow:hidden;background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent);box-shadow:0 10px 30px rgba(2,6,23,.6);position:relative}
   canvas{display:block;width:100%;height:100%}
-  .ui{position:absolute;left:12px;top:12px;font-weight:600;letter-spacing:.6px}
-  .ui .score{font-size:18px}
-  .ui .lives{font-size:14px;opacity:.9;margin-top:6px}
-  .center{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center}
-  .btn{background:rgba(255,255,255,0.06);padding:10px 16px;border-radius:8px;color:var(--text);cursor:pointer;border:1px solid rgba(255,255,255,0.04)}
-  .small{font-size:13px;opacity:.9}
-  .overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:auto}
+  .ui{position:absolute;left:12px;top:12px;font-weight:700}
+  .btn{background:rgba(255,255,255,0.04);padding:8px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);cursor:pointer}
+  .overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
   .hidden{display:none}
+  .center{text-align:center}
 </style>
 </head>
 <body>
-<div id="game" role="application" aria-label="Catch the Falling Stars game">
-  <canvas id="c" width="480" height="640"></canvas>
+  <div id="game" role="application" aria-label="Maze Runner">
+    <canvas id="c" width="640" height="640"></canvas>
+    <div class="ui">
+      <div id="moves">Moves: 0</div>
+      <div style="height:6px"></div>
+      <div id="best">Best: -</div>
+    </div>
 
-  <div class="ui">
-    <div class="score" id="score">Score: 0</div>
-    <div class="lives small" id="lives">Lives: 3</div>
-  </div>
+    <div id="start" class="overlay">
+      <div class="center">
+        <h2 style="margin:0 0 10px">Maze Runner</h2>
+        <div class="btn" id="startBtn">New Maze</div>
+        <div style="height:8px"></div>
+        <div style="font-size:13px;opacity:.9">Use arrow keys or swipe to move. Reach the green goal.</div>
+      </div>
+    </div>
 
-  <div id="start" class="overlay">
-    <div class="center">
-      <h2 style="margin:0 0 10px">Catch the Falling Stars</h2>
-      <div class="btn" id="startBtn">Start Game</div>
-      <div style="height:10px"></div>
-      <div class="small">Move with mouse, touch, or ← → keys</div>
+    <div id="win" class="overlay hidden">
+      <div class="center">
+        <h2 id="winMsg" style="margin:0 0 10px">You Escaped!</h2>
+        <div class="btn" id="againBtn">Play Again</div>
+        <div style="height:6px"></div>
+        <div id="winInfo" style="font-size:13px;opacity:.95"></div>
+      </div>
     </div>
   </div>
-
-  <div id="gameOver" class="overlay hidden">
-    <div class="center">
-      <h2 id="finalMsg" style="margin:0 0 10px">Game Over</h2>
-      <div class="btn" id="retryBtn">Play Again</div>
-      <div style="height:8px"></div>
-      <div class="small" id="finalScore"></div>
-    </div>
-  </div>
-</div>
 
 <script>
 (() => {
-  const canvas = document.getElementById('c');
-  const ctx = canvas.getContext('2d');
-  const W = canvas.width, H = canvas.height;
-
-  // Game state
-  let score = 0;
-  let lives = 3;
-  let running = false;
-  let last = 0;
-  let starTimer = 0;
-  let spawnInterval = 900; // ms
-  let stars = [];
-  const player = { x: W/2, y: H - 48, w:80, h:12, speed: 600, vx:0 };
-
-  // DOM
-  const scoreEl = document.getElementById('score');
-  const livesEl = document.getElementById('lives');
+  const canvas = document.getElementById('c'), ctx = canvas.getContext('2d');
+  const size = 21; // odd for maze algorithm
+  const cell = Math.floor(canvas.width / size);
+  const movesEl = document.getElementById('moves');
+  const bestEl = document.getElementById('best');
   const startOverlay = document.getElementById('start');
+  const winOverlay = document.getElementById('win');
   const startBtn = document.getElementById('startBtn');
-  const gameOverOverlay = document.getElementById('gameOver');
-  const retryBtn = document.getElementById('retryBtn');
-  const finalScore = document.getElementById('finalScore');
+  const againBtn = document.getElementById('againBtn');
+  const winInfo = document.getElementById('winInfo');
 
-  // Utilities
-  function rand(min,max){ return Math.random()*(max-min)+min }
+  let grid, player, goal, moves, best = localStorage.getItem('mazeRunnerBest') || null;
+  if (best) bestEl.textContent = 'Best: ' + best;
 
-  // Input
-  let pointerX = player.x;
-  window.addEventListener('mousemove', e => {
-    const rect = canvas.getBoundingClientRect();
-    pointerX = (e.clientX - rect.left) * (canvas.width / rect.width);
-  });
-  window.addEventListener('touchmove', e => {
-    e.preventDefault();
-    const rect = canvas.getBoundingClientRect();
-    pointerX = (e.touches[0].clientX - rect.left) * (canvas.width / rect.width);
-  }, {passive:false});
-
-  window.addEventListener('keydown', e => {
-    if (!running && (e.key === 'Enter' || e.key === ' ')) startGame();
-    if (e.key === 'ArrowLeft') player.vx = -1;
-    if (e.key === 'ArrowRight') player.vx = 1;
-  });
-  window.addEventListener('keyup', e => {
-    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') player.vx = 0;
-  });
-
-  // Game functions
-  function spawnStar(){
-    const size = rand(8,20);
-    const x = rand(size, W - size);
-    const speed = rand(90, 240) + Math.min(score, 500)*0.15;
-    const kind = Math.random() < 0.08 ? 'gold' : 'white'; // rare gold
-    stars.push({ x, y:-size, r:size, speed, kind });
-  }
-
-  function reset(){
-    score = 0; lives = 3; stars = []; spawnInterval = 900;
+  function initGrid(){
+    // Start with wall-filled grid; carve using recursive backtracker on odd cells
+    grid = Array(size).fill().map(()=>Array(size).fill(1));
+    const stack = [];
+    const sx = 1, sy = 1;
+    grid[sy][sx]=0;
+    stack.push([sx,sy]);
+    while(stack.length){
+      const [x,y] = stack[stack.length-1];
+      const dirs = shuffle([[2,0],[-2,0],[0,2],[0,-2]]);
+      let carved=false;
+      for (const [dx,dy] of dirs){
+        const nx = x+dx, ny = y+dy;
+        if (nx>0 && nx<size-1 && ny>0 && ny<size-1 && grid[ny][nx]===1){
+          grid[ny][nx]=0;
+          grid[y+dy/2][x+dx/2]=0;
+          stack.push([nx,ny]);
+          carved=true;
+          break;
+        }
+      }
+      if (!carved) stack.pop();
+    }
+    // place player and goal
+    player = { x:1, y:1 };
+    goal = { x:size-2, y:size-2 };
+    moves = 0;
     updateUI();
+    draw();
   }
 
-  function startGame(){
-    reset();
-    running = true;
-    last = performance.now();
-    starTimer = 0;
-    startOverlay.classList.add('hidden');
-    gameOverOverlay.classList.add('hidden');
-    requestAnimationFrame(loop);
-  }
+  function shuffle(a){ for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]] } return a }
 
-  function endGame(){
-    running = false;
-    finalScore.textContent = 'Score: ' + score;
-    document.getElementById('finalMsg').textContent = lives > 0 ? 'You Win!' : 'Game Over';
-    gameOverOverlay.classList.remove('hidden');
-  }
-
-  function updateUI(){
-    scoreEl.textContent = 'Score: ' + score;
-    livesEl.textContent = 'Lives: ' + lives;
-  }
-
-  function rectsIntersect(a,b){
-    return !(a.x + a.w/2 < b.x - b.r || a.x - a.w/2 > b.x + b.r || a.y - a.h/2 > b.y + b.r || a.y + a.h/2 < b.y - b.r);
-  }
-
-  // Main loop
-  function loop(t){
-    const dt = Math.min(40, t - last);
-    last = t;
-    if (!running) return;
-    // spawn logic
-    starTimer += dt;
-    if (starTimer > spawnInterval){
-      starTimer = 0;
-      spawnStar();
-      // speed up spawn slowly
-      spawnInterval = Math.max(300, spawnInterval - 8);
-    }
-
-    // update player: follow pointerX smoothly + keyboard
-    const targetX = pointerX || player.x;
-    const follow = (targetX - player.x) * Math.min(1, dt/100);
-    player.x += follow + player.vx * player.speed * (dt/1000);
-    player.x = Math.max(player.w/2, Math.min(W - player.w/2, player.x));
-
-    // update stars
-    for (let i = stars.length -1; i>=0; i--){
-      const s = stars[i];
-      s.y += s.speed * (dt/1000);
-      // check catch
-      const paddle = { x: player.x, y: player.y, w: player.w, h: player.h };
-      if (rectsIntersect(paddle, s)){
-        // caught
-        if (s.kind === 'gold'){
-          score += 25;
+  function draw(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    // background
+    ctx.fillStyle = '#071022';
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+    // draw cells
+    for(let y=0;y<size;y++){
+      for(let x=0;x<size;x++){
+        const px = x*cell, py = y*cell;
+        if (grid[y][x]===1){
+          ctx.fillStyle = '#0f1724';
+          ctx.fillRect(px,py,cell,cell);
         } else {
-          score += Math.round(10 + (20 - s.r));
-        }
-        // small chance to grant extra life
-        if (Math.random() < 0.04) lives = Math.min(5, lives + 1);
-        stars.splice(i,1);
-        updateUI();
-        continue;
-      }
-      // missed
-      if (s.y - s.r > H){
-        lives -= 1;
-        stars.splice(i,1);
-        updateUI();
-        if (lives <= 0){
-          endGame();
-          return;
+          ctx.fillStyle = '#0b1220';
+          ctx.fillRect(px,py,cell,cell);
         }
       }
     }
-
-    // Draw
-    ctx.clearRect(0,0,W,H);
-
-    // background subtle stars
-    ctx.fillStyle = 'rgba(255,255,255,0.03)';
-    for (let i=0;i<40;i++){
-      ctx.fillRect((i*73)%W, (i*37)%H, 1,1);
-    }
-
-    // draw player paddle
-    const grad = ctx.createLinearGradient(player.x - player.w/2, player.y, player.x + player.w/2, player.y);
-    grad.addColorStop(0,'rgba(94,234,212,0.15)');
-    grad.addColorStop(1,'rgba(94,234,212,0.35)');
-    ctx.fillStyle = grad;
-    roundRect(ctx, player.x - player.w/2, player.y - player.h/2, player.w, player.h, 6, true);
-
-    // draw stars
-    for (const s of stars){
-      if (s.kind === 'gold'){
-        ctx.fillStyle = '#facc15';
-        ctx.shadowColor = 'rgba(250,204,21,0.8)';
-        ctx.shadowBlur = 14;
-      } else {
-        ctx.fillStyle = '#ffffff';
-        ctx.shadowColor = 'rgba(255,255,255,0.06)';
-        ctx.shadowBlur = 6;
-      }
-      drawStar(ctx, s.x, s.y, Math.max(3, Math.round(s.r/3)), s.r * 0.6);
-      ctx.shadowBlur = 0;
-    }
-
-    // small HUD hint
-    ctx.fillStyle = 'rgba(255,255,255,0.04)';
-    ctx.fillRect(0,H-40,W,40);
-
-    requestAnimationFrame(loop);
-  }
-
-  // Helpers
-  function roundRect(ctx,x,y,w,h,r,fill){
+    // draw goal
+    ctx.fillStyle = '#34d399';
+    ctx.fillRect(goal.x*cell+cell*0.15, goal.y*cell+cell*0.15, cell*0.7, cell*0.7);
+    // draw player
+    ctx.fillStyle = '#60a5fa';
     ctx.beginPath();
-    ctx.moveTo(x+r,y);
-    ctx.arcTo(x+w,y,x+w,y+h,r);
-    ctx.arcTo(x+w,y+h,x,y+h,r);
-    ctx.arcTo(x,y+h,x,y,r);
-    ctx.arcTo(x,y,x+w,y,r);
-    ctx.closePath();
-    if (fill) ctx.fill();
-    else ctx.stroke();
-  }
-
-  function drawStar(ctx, cx, cy, spikes, outerRadius){
-    const innerRadius = outerRadius * 0.5;
-    let rot = Math.PI / 2 * 3;
-    let x = cx;
-    let y = cy;
-    const step = Math.PI / spikes;
-    ctx.beginPath();
-    ctx.moveTo(cx, cy - outerRadius);
-    for (let i = 0; i < spikes; i++){
-      x = cx + Math.cos(rot) * outerRadius;
-      y = cy + Math.sin(rot) * outerRadius;
-      ctx.lineTo(x, y);
-      rot += step;
-
-      x = cx + Math.cos(rot) * innerRadius;
-      y = cy + Math.sin(rot) * innerRadius;
-      ctx.lineTo(x, y);
-      rot += step;
-    }
-    ctx.closePath();
+    ctx.arc(player.x*cell + cell/2, player.y*cell + cell/2, cell*0.35, 0, Math.PI*2);
     ctx.fill();
+    // grid accent
+    ctx.strokeStyle = 'rgba(255,255,255,0.02)';
+    ctx.strokeRect(0,0,canvas.width,canvas.height);
   }
 
-  // Buttons
-  startBtn.addEventListener('click', startGame);
-  retryBtn.addEventListener('click', startGame);
+  function updateUI(){ movesEl.textContent = 'Moves: ' + moves; if (best) bestEl.textContent = 'Best: ' + best; }
 
-  // initial render: tiny animation
+  function tryMove(dx,dy){
+    const nx = player.x + dx, ny = player.y + dy;
+    if (nx<0||ny<0||nx>=size||ny>=size) return;
+    if (grid[ny][nx]===0){
+      player.x = nx; player.y = ny; moves++;
+      updateUI(); draw();
+      checkWin();
+    }
+  }
+
+  function checkWin(){
+    if (player.x === goal.x && player.y === goal.y){
+      winOverlay.classList.remove('hidden');
+      winInfo.textContent = 'Moves: ' + moves;
+      if (!best || moves < best){
+        best = moves; localStorage.setItem('mazeRunnerBest', best); bestEl.textContent = 'Best: ' + best;
+        winInfo.textContent += ' — New Best!';
+      }
+    }
+  }
+
+  // Keyboard
+  window.addEventListener('keydown', e=>{
+    if (startOverlay.classList.contains('hidden') && winOverlay.classList.contains('hidden')){
+      if (e.key === 'ArrowUp') tryMove(0,-1);
+      if (e.key === 'ArrowDown') tryMove(0,1);
+      if (e.key === 'ArrowLeft') tryMove(-1,0);
+      if (e.key === 'ArrowRight') tryMove(1,0);
+    }
+    if (!startOverlay.classList.contains('hidden') && (e.key==='Enter' || e.key===' ')) startGame();
+  });
+
+  // touch swipe
+  let sx, sy;
+  canvas.addEventListener('touchstart', e=>{ const t=e.touches[0]; sx=t.clientX; sy=t.clientY; });
+  canvas.addEventListener('touchend', e=>{
+    if (!sx) return;
+    const t = e.changedTouches[0]; const dx = t.clientX - sx, dy = t.clientY - sy;
+    if (Math.abs(dx) > Math.abs(dy)){
+      if (dx > 30) tryMove(1,0);
+      if (dx < -30) tryMove(-1,0);
+    } else {
+      if (dy > 30) tryMove(0,1);
+      if (dy < -30) tryMove(0,-1);
+    }
+    sx = sy = null;
+  });
+
+  function startGame(){ startOverlay.classList.add('hidden'); winOverlay.classList.add('hidden'); initGrid(); }
+
+  startBtn.addEventListener('click', startGame);
+  againBtn.addEventListener('click', ()=>{ winOverlay.classList.add('hidden'); initGrid(); });
+
+  // initial draw
   (function intro(){
-    const g = ctx;
-    g.clearRect(0,0,W,H);
-    g.fillStyle = '#e6edf3';
-    g.font = '20px system-ui,Segoe UI,Roboto,Arial';
-    g.textAlign = 'center';
-    g.fillText('Catch the Falling Stars', W/2, H/2 - 30);
-    g.font = '13px system-ui,Segoe UI,Roboto,Arial';
-    g.fillStyle = 'rgba(230,237,243,0.85)';
-    g.fillText('Click Start — Move with mouse, touch or arrow keys', W/2, H/2);
+    ctx.fillStyle = '#e6edf3';
+    ctx.font = '20px system-ui,Segoe UI,Roboto,Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('Maze Runner', canvas.width/2, canvas.height/2 - 20);
+    ctx.font = '13px system-ui,Segoe UI,Roboto,Arial';
+    ctx.fillText('New random maze — reach the green goal', canvas.width/2, canvas.height/2 + 6);
   })();
 
 })();
