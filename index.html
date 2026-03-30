@@ -3,15 +3,15 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Maze Runner</title>
+<title>Space Defender</title>
 <style>
-  :root{--bg:#0b1220;--tile:#111827;--path:#e6edf3;--player:#60a5fa;--goal:#34d399}
+  :root{--bg:#04060a;--ship:#60a5fa;--enemy:#fb7185;--bullet:#fff}
   *{box-sizing:border-box}
-  html,body{height:100%;margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial}
-  body{background:linear-gradient(180deg,#071022 0%,#081427 100%);display:flex;align-items:center;justify-content:center;color:var(--path)}
-  #game{width:640px;height:640px;border-radius:12px;overflow:hidden;background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent);box-shadow:0 10px 30px rgba(2,6,23,.6);position:relative}
+  html,body{height:100%;margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;background:radial-gradient(ellipse at top,#071428 0%,var(--bg) 60%);display:flex;align-items:center;justify-content:center;color:#e6edf3}
+  #game{width:480px;height:720px;background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent);border-radius:12px;box-shadow:0 12px 40px rgba(2,6,23,.6);position:relative;overflow:hidden}
   canvas{display:block;width:100%;height:100%}
   .ui{position:absolute;left:12px;top:12px;font-weight:700}
+  .ui .score{font-size:18px}
   .btn{background:rgba(255,255,255,0.04);padding:8px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);cursor:pointer}
   .overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
   .hidden{display:none}
@@ -19,29 +19,29 @@
 </style>
 </head>
 <body>
-  <div id="game" role="application" aria-label="Maze Runner">
-    <canvas id="c" width="640" height="640"></canvas>
+  <div id="game" role="application" aria-label="Space Defender">
+    <canvas id="c" width="480" height="720"></canvas>
     <div class="ui">
-      <div id="moves">Moves: 0</div>
+      <div class="score" id="score">Score: 0</div>
       <div style="height:6px"></div>
-      <div id="best">Best: -</div>
+      <div id="lives">Lives: 3</div>
     </div>
 
     <div id="start" class="overlay">
       <div class="center">
-        <h2 style="margin:0 0 10px">Maze Runner</h2>
-        <div class="btn" id="startBtn">New Maze</div>
+        <h2 style="margin:0 0 10px">Space Defender</h2>
+        <div class="btn" id="startBtn">Start</div>
         <div style="height:8px"></div>
-        <div style="font-size:13px;opacity:.9">Use arrow keys or swipe to move. Reach the green goal.</div>
+        <div style="font-size:13px;opacity:.9">Move with mouse/touch or ← → keys. Shoot with space or tap.</div>
       </div>
     </div>
 
-    <div id="win" class="overlay hidden">
+    <div id="gameOver" class="overlay hidden">
       <div class="center">
-        <h2 id="winMsg" style="margin:0 0 10px">You Escaped!</h2>
-        <div class="btn" id="againBtn">Play Again</div>
-        <div style="height:6px"></div>
-        <div id="winInfo" style="font-size:13px;opacity:.95"></div>
+        <h2 id="finalMsg" style="margin:0 0 10px">Game Over</h2>
+        <div class="btn" id="retryBtn">Play Again</div>
+        <div style="height:8px"></div>
+        <div id="finalScore" style="font-size:13px;opacity:.95"></div>
       </div>
     </div>
   </div>
@@ -49,146 +49,259 @@
 <script>
 (() => {
   const canvas = document.getElementById('c'), ctx = canvas.getContext('2d');
-  const size = 21; // odd for maze algorithm
-  const cell = Math.floor(canvas.width / size);
-  const movesEl = document.getElementById('moves');
-  const bestEl = document.getElementById('best');
+  const W = canvas.width, H = canvas.height;
+
+  // state
+  let running=false, last=0, spawnTimer=0, spawnInterval=1400, score=0, lives=3;
+  const ship = { x: W/2, y: H - 70, w:36, h:22, vx:0, speed:480 };
+  let bullets = [], enemies = [], explosions = [];
+
+  // DOM
+  const scoreEl = document.getElementById('score');
+  const livesEl = document.getElementById('lives');
   const startOverlay = document.getElementById('start');
-  const winOverlay = document.getElementById('win');
   const startBtn = document.getElementById('startBtn');
-  const againBtn = document.getElementById('againBtn');
-  const winInfo = document.getElementById('winInfo');
+  const gameOverOverlay = document.getElementById('gameOver');
+  const retryBtn = document.getElementById('retryBtn');
+  const finalScore = document.getElementById('finalScore');
 
-  let grid, player, goal, moves, best = localStorage.getItem('mazeRunnerBest') || null;
-  if (best) bestEl.textContent = 'Best: ' + best;
+  // input
+  let pointerX = ship.x;
+  window.addEventListener('mousemove', e=>{
+    const r = canvas.getBoundingClientRect();
+    pointerX = (e.clientX - r.left) * (canvas.width / r.width);
+  });
+  window.addEventListener('touchmove', e=>{
+    const t = e.touches[0];
+    const r = canvas.getBoundingClientRect();
+    pointerX = (t.clientX - r.left) * (canvas.width / r.width);
+  }, {passive:false});
 
-  function initGrid(){
-    // Start with wall-filled grid; carve using recursive backtracker on odd cells
-    grid = Array(size).fill().map(()=>Array(size).fill(1));
-    const stack = [];
-    const sx = 1, sy = 1;
-    grid[sy][sx]=0;
-    stack.push([sx,sy]);
-    while(stack.length){
-      const [x,y] = stack[stack.length-1];
-      const dirs = shuffle([[2,0],[-2,0],[0,2],[0,-2]]);
-      let carved=false;
-      for (const [dx,dy] of dirs){
-        const nx = x+dx, ny = y+dy;
-        if (nx>0 && nx<size-1 && ny>0 && ny<size-1 && grid[ny][nx]===1){
-          grid[ny][nx]=0;
-          grid[y+dy/2][x+dx/2]=0;
-          stack.push([nx,ny]);
-          carved=true;
-          break;
-        }
-      }
-      if (!carved) stack.pop();
-    }
-    // place player and goal
-    player = { x:1, y:1 };
-    goal = { x:size-2, y:size-2 };
-    moves = 0;
-    updateUI();
-    draw();
+  window.addEventListener('keydown', e=>{
+    if (!running && (e.key==='Enter' || e.key===' ')) startGame();
+    if (e.key==='ArrowLeft') ship.vx = -1;
+    if (e.key==='ArrowRight') ship.vx = 1;
+    if (e.key === ' ') fire();
+  });
+  window.addEventListener('keyup', e=>{
+    if (e.key==='ArrowLeft' || e.key==='ArrowRight') ship.vx = 0;
+  });
+  canvas.addEventListener('click', fire);
+  canvas.addEventListener('touchstart', e=>{ fire(); e.preventDefault(); }, {passive:false});
+
+  function updateUI(){ scoreEl.textContent = 'Score: ' + score; livesEl.textContent = 'Lives: ' + lives; }
+
+  function startGame(){
+    score = 0; lives = 3; bullets = []; enemies = []; explosions = []; spawnInterval = 1400;
+    running = true; last = performance.now(); spawnTimer = 0;
+    startOverlay.classList.add('hidden'); gameOverOverlay.classList.add('hidden');
+    updateUI(); requestAnimationFrame(loop);
   }
 
-  function shuffle(a){ for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]] } return a }
+  function endGame(){
+    running = false;
+    finalScore.textContent = 'Score: ' + score;
+    gameOverOverlay.classList.remove('hidden');
+  }
 
-  function draw(){
-    ctx.clearRect(0,0,canvas.width,canvas.height);
-    // background
-    ctx.fillStyle = '#071022';
-    ctx.fillRect(0,0,canvas.width,canvas.height);
-    // draw cells
-    for(let y=0;y<size;y++){
-      for(let x=0;x<size;x++){
-        const px = x*cell, py = y*cell;
-        if (grid[y][x]===1){
-          ctx.fillStyle = '#0f1724';
-          ctx.fillRect(px,py,cell,cell);
-        } else {
-          ctx.fillStyle = '#0b1220';
-          ctx.fillRect(px,py,cell,cell);
+  // spawn enemies
+  function spawnEnemy(){
+    const w = randInt(28,48), h = randInt(18,28);
+    const x = rand(w/2, W - w/2);
+    const type = Math.random() < 0.12 ? 'fast' : Math.random() < 0.12 ? 'big' : 'small';
+    const speed = type === 'fast' ? rand(220,320) : type === 'big' ? rand(70,130) : rand(110,180);
+    enemies.push({ x, y:-h, w, h, speed, hp: type==='big'?3:1, type, angle:0, wobble: Math.random()*2 });
+  }
+
+  function fire(){
+    if (!running) return;
+    bullets.push({ x: ship.x, y: ship.y - ship.h/2 - 6, r:3, speed: 540 });
+  }
+
+  function rand(min,max){ return Math.random()*(max-min)+min; }
+  function randInt(a,b){ return Math.floor(rand(a,b+1)); }
+
+  function loop(t){
+    const dt = Math.min(40, t - last);
+    last = t;
+    if (!running) return;
+
+    // spawn
+    spawnTimer += dt;
+    if (spawnTimer > spawnInterval){
+      spawnTimer = 0;
+      spawnEnemy();
+      spawnInterval = Math.max(550, spawnInterval - 12);
+    }
+
+    // ship movement: follow pointer smoothly + keyboard
+    const targetX = pointerX || ship.x;
+    ship.x += (targetX - ship.x) * Math.min(1, dt/100) + ship.vx * ship.speed * (dt/1000);
+    ship.x = Math.max(ship.w/2, Math.min(W - ship.w/2, ship.x));
+
+    // bullets
+    for (let i = bullets.length-1; i>=0; i--){
+      const b = bullets[i];
+      b.y -= b.speed * (dt/1000);
+      if (b.y < -10) bullets.splice(i,1);
+    }
+
+    // enemies
+    for (let i = enemies.length-1; i>=0; i--){
+      const e = enemies[i];
+      e.y += e.speed * (dt/1000);
+      e.angle += 0.05 * e.wobble;
+      // collide with bullets
+      for (let j = bullets.length-1; j>=0; j--){
+        const b = bullets[j];
+        if (pointInRect(b.x, b.y, e.x - e.w/2, e.y - e.h/2, e.w, e.h)){
+          bullets.splice(j,1);
+          e.hp -= 1;
+          explosions.push({ x: b.x, y: b.y, life: 260 });
+          if (e.hp <= 0){
+            // destroyed
+            score += e.type === 'big' ? 50 : e.type === 'fast' ? 20 : 10;
+            explosions.push({ x: e.x, y: e.y, big:true, life: 560 });
+            enemies.splice(i,1);
+            updateUI();
+            break;
+          } else {
+            score += 6;
+            updateUI();
+          }
         }
       }
+      // collide with ship
+      if (rectsIntersect({x:ship.x, y:ship.y, w:ship.w, h:ship.h}, {x:e.x, y:e.y, w:e.w, h:e.h})){
+        enemies.splice(i,1);
+        explosions.push({ x: ship.x, y: ship.y, big:true, life: 560 });
+        lives -= 1;
+        updateUI();
+        if (lives <= 0){ endGame(); return; }
+      }
+      // remove if offscreen
+      if (e.y - e.h/2 > H + 40) enemies.splice(i,1);
     }
-    // draw goal
-    ctx.fillStyle = '#34d399';
-    ctx.fillRect(goal.x*cell+cell*0.15, goal.y*cell+cell*0.15, cell*0.7, cell*0.7);
-    // draw player
+
+    // explosions life
+    for (let i = explosions.length-1; i>=0; i--){
+      const ex = explosions[i];
+      ex.life -= dt;
+      if (ex.life <= 0) explosions.splice(i,1);
+    }
+
+    // draw
+    ctx.clearRect(0,0,W,H);
+    // starfield
+    drawStars(t);
+
+    // draw ship
+    drawShip(ship.x, ship.y);
+
+    // draw bullets
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--bullet') || '#fff';
+    for (const b of bullets){
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.r, 0, Math.PI*2);
+      ctx.fill();
+    }
+
+    // draw enemies
+    for (const e of enemies){
+      ctx.save();
+      ctx.translate(e.x, e.y);
+      ctx.rotate(Math.sin(e.angle)*0.15);
+      // body
+      ctx.fillStyle = e.type === 'big' ? '#fb923c' : e.type === 'fast' ? '#f43f5e' : '#fb7185';
+      roundRect(ctx, -e.w/2, -e.h/2, e.w, e.h, 6, true);
+      // eye
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(-6, -e.h/6, 12, 6);
+      ctx.restore();
+    }
+
+    // explosions
+    for (const ex of explosions){
+      const p = Math.max(0, ex.life / 560);
+      ctx.beginPath();
+      const rad = (ex.big ? 30 : 12) * (1 - p) + 2;
+      ctx.fillStyle = 'rgba(255,200,80,' + (0.9*p) + ')';
+      ctx.arc(ex.x, ex.y, rad, 0, Math.PI*2);
+      ctx.fill();
+    }
+
+    requestAnimationFrame(loop);
+  }
+
+  function drawStars(t){
+    // moving layered stars
+    const s1 = 0.02 * t;
+    ctx.fillStyle = '#071429';
+    ctx.fillRect(0,0,W,H);
+    for (let i=0;i<60;i++){
+      const x = (i * 79 + Math.floor(s1* (i%7+1))) % W;
+      const y = (i * 47 + Math.floor(s1* (i%5+1))) % H;
+      ctx.fillStyle = i%7===0 ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.12)';
+      ctx.fillRect(x, y, i%7===0 ? 2 : 1, i%7===0 ? 2 : 1);
+    }
+  }
+
+  function drawShip(x,y){
+    ctx.save();
+    ctx.translate(x,y);
+    // glow
+    ctx.fillStyle = 'rgba(96,165,250,0.08)';
+    ctx.beginPath();
+    ctx.ellipse(0, 5, 36, 10, 0, 0, Math.PI*2);
+    ctx.fill();
+    // body
     ctx.fillStyle = '#60a5fa';
     ctx.beginPath();
-    ctx.arc(player.x*cell + cell/2, player.y*cell + cell/2, cell*0.35, 0, Math.PI*2);
+    ctx.moveTo(0,-18);
+    ctx.lineTo(18,10);
+    ctx.lineTo(0,6);
+    ctx.lineTo(-18,10);
+    ctx.closePath();
     ctx.fill();
-    // grid accent
-    ctx.strokeStyle = 'rgba(255,255,255,0.02)';
-    ctx.strokeRect(0,0,canvas.width,canvas.height);
+    // cockpit
+    ctx.fillStyle = '#0b1220';
+    ctx.beginPath();
+    ctx.ellipse(0, -6, 6, 4, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
   }
 
-  function updateUI(){ movesEl.textContent = 'Moves: ' + moves; if (best) bestEl.textContent = 'Best: ' + best; }
-
-  function tryMove(dx,dy){
-    const nx = player.x + dx, ny = player.y + dy;
-    if (nx<0||ny<0||nx>=size||ny>=size) return;
-    if (grid[ny][nx]===0){
-      player.x = nx; player.y = ny; moves++;
-      updateUI(); draw();
-      checkWin();
-    }
+  function roundRect(ctx,x,y,w,h,r,fill){
+    ctx.beginPath();
+    ctx.moveTo(x+r,y);
+    ctx.arcTo(x+w,y,x+w,y+h,r);
+    ctx.arcTo(x+w,y+h,x,y+h,r);
+    ctx.arcTo(x,y+h,x,y,r);
+    ctx.arcTo(x,y,x+w,y,r);
+    ctx.closePath();
+    if (fill) ctx.fill(); else ctx.stroke();
   }
 
-  function checkWin(){
-    if (player.x === goal.x && player.y === goal.y){
-      winOverlay.classList.remove('hidden');
-      winInfo.textContent = 'Moves: ' + moves;
-      if (!best || moves < best){
-        best = moves; localStorage.setItem('mazeRunnerBest', best); bestEl.textContent = 'Best: ' + best;
-        winInfo.textContent += ' — New Best!';
-      }
-    }
+  function pointInRect(px,py,rx,ry,rw,rh){
+    return px >= rx && px <= rx+rw && py >= ry && py <= ry+rh;
   }
 
-  // Keyboard
-  window.addEventListener('keydown', e=>{
-    if (startOverlay.classList.contains('hidden') && winOverlay.classList.contains('hidden')){
-      if (e.key === 'ArrowUp') tryMove(0,-1);
-      if (e.key === 'ArrowDown') tryMove(0,1);
-      if (e.key === 'ArrowLeft') tryMove(-1,0);
-      if (e.key === 'ArrowRight') tryMove(1,0);
-    }
-    if (!startOverlay.classList.contains('hidden') && (e.key==='Enter' || e.key===' ')) startGame();
-  });
+  function rectsIntersect(a,b){
+    return !(a.x + a.w/2 < b.x - b.w/2 || a.x - a.w/2 > b.x + b.w/2 || a.y - a.h/2 > b.y + b.h/2 || a.y + a.h/2 < b.y - b.h/2);
+  }
 
-  // touch swipe
-  let sx, sy;
-  canvas.addEventListener('touchstart', e=>{ const t=e.touches[0]; sx=t.clientX; sy=t.clientY; });
-  canvas.addEventListener('touchend', e=>{
-    if (!sx) return;
-    const t = e.changedTouches[0]; const dx = t.clientX - sx, dy = t.clientY - sy;
-    if (Math.abs(dx) > Math.abs(dy)){
-      if (dx > 30) tryMove(1,0);
-      if (dx < -30) tryMove(-1,0);
-    } else {
-      if (dy > 30) tryMove(0,1);
-      if (dy < -30) tryMove(0,-1);
-    }
-    sx = sy = null;
-  });
-
-  function startGame(){ startOverlay.classList.add('hidden'); winOverlay.classList.add('hidden'); initGrid(); }
-
+  // buttons
   startBtn.addEventListener('click', startGame);
-  againBtn.addEventListener('click', ()=>{ winOverlay.classList.add('hidden'); initGrid(); });
+  retryBtn.addEventListener('click', startGame);
 
-  // initial draw
+  // initial screen
   (function intro(){
     ctx.fillStyle = '#e6edf3';
     ctx.font = '20px system-ui,Segoe UI,Roboto,Arial';
     ctx.textAlign = 'center';
-    ctx.fillText('Maze Runner', canvas.width/2, canvas.height/2 - 20);
+    ctx.fillText('Space Defender', W/2, H/2 - 20);
     ctx.font = '13px system-ui,Segoe UI,Roboto,Arial';
-    ctx.fillText('New random maze — reach the green goal', canvas.width/2, canvas.height/2 + 6);
+    ctx.fillText('Shoot enemies. Move with mouse/touch or arrow keys.', W/2, H/2 + 6);
   })();
 
 })();
